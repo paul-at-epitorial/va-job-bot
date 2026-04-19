@@ -1,12 +1,15 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const express = require('express');
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
+const app = express();
+app.use(express.json());
 
 const GUILD_ID = "1495231309788745798";
-const CHANNEL_ID = "1495231313517613098"; // Replace this with your actual #job-alerts channel ID
+const CHANNEL_ID = "1495231313517613098"; // Keep your actual ID here
 const ALERTS_OFF_ROLE = "1495319403556769856";
 
 const roleIds = {
@@ -23,10 +26,27 @@ client.once('clientReady', () => {
     console.log(`Bot logged in as ${client.user.tag}`);
 });
 
-// We will connect this function to your scraper logic later
+// The Webhook Listener for your Puppeteer Scraper
+app.post('/new-job', async (req, res) => {
+    try {
+        const { jobCategoryKey, jobTitle, jobLink } = req.body;
+        
+        if (!jobCategoryKey || !jobTitle || !jobLink) {
+            return res.status(400).send({ error: "Missing job data" });
+        }
+
+        await postJobAlert(jobCategoryKey, jobTitle, jobLink);
+        res.status(200).send({ success: true, message: "Job posted to Discord" });
+        
+    } catch (error) {
+        console.error("Error posting job:", error);
+        res.status(500).send({ error: "Internal bot error" });
+    }
+});
+
 async function postJobAlert(jobCategoryKey, jobTitle, jobLink) {
     const targetRoleId = roleIds[jobCategoryKey];
-    if (!targetRoleId) return console.log("Invalid job category.");
+    if (!targetRoleId) return console.log("Invalid job category:", jobCategoryKey);
 
     const guild = await client.guilds.fetch(GUILD_ID);
     const channel = await guild.channels.fetch(CHANNEL_ID);
@@ -55,5 +75,11 @@ async function postJobAlert(jobCategoryKey, jobTitle, jobLink) {
         components: [row]
     });
 }
+
+// Start the web server and the Discord bot
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Web server listening on port ${PORT}`);
+});
 
 client.login(process.env.BOT_TOKEN);
