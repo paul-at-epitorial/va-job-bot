@@ -22,8 +22,16 @@ const roleIds = {
     "management-va": "1495457104096530464"
 };
 
-client.once('clientReady', () => {
+client.once('clientReady', async () => {
     console.log(`Bot logged in as ${client.user.tag}`);
+    // Pre-fetch the member list once on startup to avoid Opcode 8 rate limits
+    try {
+        const guild = await client.guilds.fetch(GUILD_ID);
+        await guild.members.fetch();
+        console.log("Server member list cached successfully.");
+    } catch (err) {
+        console.error("Could not fetch members:", err);
+    }
 });
 
 // The Webhook Listener for your Puppeteer Scraper
@@ -51,8 +59,7 @@ async function postJobAlert(jobCategoryKey, jobTitle, jobLink) {
     const guild = await client.guilds.fetch(GUILD_ID);
     const channel = await guild.channels.fetch(CHANNEL_ID);
 
-    const members = await guild.members.fetch();
-    let pings = [];
+    const members = guild.members.cache;
 
     // Filter for users who have the job role BUT NOT the alerts-off role
     members.forEach(member => {
