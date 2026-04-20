@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 
 const GUILD_ID = "1495231309788745798";
-const CHANNEL_ID = "1495231313517613098"; // Keep your actual ID here
+const CHANNEL_ID = "1495231313517613098"; // Your actual ID is locked in here
 const ALERTS_OFF_ROLE = "1495319403556769856";
 
 const roleIds = {
@@ -61,8 +61,6 @@ async function postJobAlert(jobCategoryKey, jobTitle, jobLink) {
         }
     });
 
-    const pingString = pings.length > 0 ? pings.join(" ") : "*No active users to ping.*";
-
     const claimButton = new ButtonBuilder()
         .setCustomId(`claim_job_${Date.now()}`)
         .setLabel('Claim Job')
@@ -70,10 +68,24 @@ async function postJobAlert(jobCategoryKey, jobTitle, jobLink) {
 
     const row = new ActionRowBuilder().addComponents(claimButton);
 
+    // Send the Job Card first
     await channel.send({
-        content: `🚨 **New Job: ${jobTitle}**\nApply here: ${jobLink}\n\n${pingString}`,
+        content: `🚨 **New Job: ${jobTitle}**\nApply here: ${jobLink}`,
         components: [row]
     });
+
+    // Send the pings separately to bypass Discord length limits
+    if (pings.length > 0) {
+        // Chunk pings into safe groups of 80 users
+        for (let i = 0; i < pings.length; i += 80) {
+            const chunk = pings.slice(i, i + 80).join(" ");
+            const pingMessage = await channel.send(`*Pinging available VAs:* ${chunk}`);
+            
+            // Pro-trick: Delete the ping message so it doesn't clutter the chat
+            // Phones still receive the push notification even if deleted instantly
+            setTimeout(() => pingMessage.delete().catch(() => {}), 3000);
+        }
+    }
 }
 
 // Start the web server and the Discord bot
