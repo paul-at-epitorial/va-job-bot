@@ -75,24 +75,27 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
     if (interaction.customId.startsWith('apply_job_')) {
+        // Instantly tell Discord "I'm working on it" to stop the 3-second crash
+        await interaction.deferUpdate().catch(() => {});
+
         const originalContent = interaction.message.content;
         
-        const urlMatch = originalContent.match(/Job Link:\s*<([^>]+)>/);
+        // Bulletproof Regex: Extracts URL whether Discord kept the < > brackets or stripped them
+        const urlMatch = originalContent.match(/Job Link:\s*<?(https?:\/\/[^\s>]+)>?/);
         const extractedUrl = urlMatch ? urlMatch[1] : null;
         
         const titleMatch = originalContent.match(/🚨\s*(.+)/);
         const jobTitleDisplay = titleMatch ? titleMatch[1].replace(/\*\*/g, '').trim() : "this job";
         const cleanUrl = extractedUrl || "Link unavailable";
         
-        let newContent = originalContent.replace(/\n*Job Link:\s*<[^>]+>/, '').trim();
+        let newContent = originalContent.replace(/\n*Job Link:\s*<?https?:\/\/[^\s>]+>?/, '').trim();
         newContent += `\n\n*🔒 Applying: <@${interaction.user.id}>*`;
 
         let updatedComponents = [];
 
-        // If there is a URL, add only the "Read More" button. Otherwise, leave it empty to remove all buttons.
         if (extractedUrl) {
             const readMoreBtn = new ButtonBuilder()
-                .setLabel('Read More')
+                .setLabel('Read More ↗')
                 .setStyle(ButtonStyle.Link)
                 .setURL(extractedUrl);
             
@@ -100,12 +103,13 @@ client.on('interactionCreate', async interaction => {
             updatedComponents = [updatedRow];
         }
 
-        await interaction.update({
+        // Use editReply because we already deferred the update
+        await interaction.editReply({
             content: newContent,
             components: updatedComponents 
-        });
+        }).catch(err => console.error("Error editing message:", err));
 
-        await interaction.message.react('✍️').catch(err => console.log("Failed to react:", err));
+        await interaction.message.react('✍️').catch(() => {});
 
         let wasAlreadyMuted = false;
         let dmContent = "";
@@ -177,7 +181,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     else if (interaction.customId.startsWith('applied_')) {
-        await interaction.deferUpdate(); 
+        await interaction.deferUpdate().catch(() => {}); 
         const [, channelId, messageId] = interaction.customId.split('_');
         
         try {
@@ -201,7 +205,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     else if (interaction.customId.startsWith('badlink_')) {
-        await interaction.deferUpdate(); 
+        await interaction.deferUpdate().catch(() => {}); 
         const [, channelId, messageId] = interaction.customId.split('_');
         
         try {
@@ -225,7 +229,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     else if (interaction.customId === 'alerts_on') {
-        await interaction.deferUpdate();
+        await interaction.deferUpdate().catch(() => {});
 
         try {
             const guild = await client.guilds.fetch(GUILD_ID);
