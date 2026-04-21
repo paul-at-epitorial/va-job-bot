@@ -77,7 +77,6 @@ client.on('interactionCreate', async interaction => {
     if (interaction.customId.startsWith('apply_job_')) {
         const originalContent = interaction.message.content;
         
-        // Extract URL and Title for the DM
         const urlMatch = originalContent.match(/Job Link:\s*<([^>]+)>/);
         const extractedUrl = urlMatch ? urlMatch[1] : null;
         
@@ -88,28 +87,22 @@ client.on('interactionCreate', async interaction => {
         let newContent = originalContent.replace(/\n*Job Link:\s*<[^>]+>/, '').trim();
         newContent += `\n\n*🔒 Applying: <@${interaction.user.id}>*`;
 
-        const disabledApplyBtn = new ButtonBuilder()
-            .setCustomId(interaction.customId)
-            .setLabel('Apply Now')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(true);
+        let updatedComponents = [];
 
-        const componentsArray = [disabledApplyBtn];
-
+        // If there is a URL, add only the "Read More" button. Otherwise, leave it empty to remove all buttons.
         if (extractedUrl) {
             const readMoreBtn = new ButtonBuilder()
-                .setLabel('Read More ↗')
+                .setLabel('Read More')
                 .setStyle(ButtonStyle.Link)
                 .setURL(extractedUrl);
-            componentsArray.push(readMoreBtn);
+            
+            const updatedRow = new ActionRowBuilder().addComponents(readMoreBtn);
+            updatedComponents = [updatedRow];
         }
 
-        const updatedRow = new ActionRowBuilder().addComponents(componentsArray);
-
-        // Update the main channel message instantly
         await interaction.update({
             content: newContent,
-            components: [updatedRow] 
+            components: updatedComponents 
         });
 
         await interaction.message.react('✍️').catch(err => console.log("Failed to react:", err));
