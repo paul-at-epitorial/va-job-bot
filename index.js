@@ -2,6 +2,9 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const express = require('express');
 
+// We feed the bot your Apps Script URL so it can talk to the database
+const GOOGLE_SHEET_WEB_APP = "https://script.google.com/macros/s/AKfycbxXjl7h99EAeJmLG3tkhOWJKZ3J88oubMNHDFsWa1zlr1nFLZFBRtal2CSxePdGSx6J/exec";
+
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
@@ -22,22 +25,55 @@ const roleIds = {
     "management-va": "1495457104096530464"
 };
 
+// --- NEW FUNCTION: Check Google Sheets for expired mutes ---
+async function checkExpiredMutes() {
+    try {
+        const res = await fetch(GOOGLE_SHEET_WEB_APP, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'get_expired_mutes', currentTime: Date.now() }),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        
+        if (data.status === 'success' && data.expiredUsers.length > 0) {
+            const guild = await client.guilds.fetch(GUILD_ID);
+            for (let userId of data.expiredUsers) {
+                try {
+                    const member = await guild.members.fetch(userId);
+                    if (member.roles.cache.has(ALERTS_OFF_ROLE)) {
+                        await member.roles.remove(ALERTS_OFF_ROLE);
+                        console.log(`Automatically unmuted user: ${member.user.tag}`);
+                    }
+                } catch (e) {
+                    console.log(`Could not unmute user ${userId}. They may have left the server.`);
+                }
+            }
+        }
+    } catch (err) {
+        console.error("Failed to check expired mutes:", err);
+    }
+}
+
 client.once('clientReady', async () => {
     console.log(`Bot logged in as ${client.user.tag}`);
     try {
         const guild = await client.guilds.fetch(GUILD_ID);
         await guild.members.fetch();
         console.log("Server member list cached successfully.");
+        
+        // Check for expired timers immediately upon waking up
+        await checkExpiredMutes();
+        // Keep checking every 5 minutes while the server is awake
+        setInterval(checkExpiredMutes, 5 * 60 * 1000);
     } catch (err) {
         console.error("Could not fetch members:", err);
     }
 });
 
-// The Interaction Listener (Handles all Button Clicks)
+// The Interaction Listener
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
-    // --- 1. CLAIM JOB BUTTON (Clicked inside #job-alerts) ---
     if (interaction.customId.startsWith('claim_job_')) {
         await interaction.update({
             content: interaction.message.content + `\n\n*🔒 Claimed by <@${interaction.user.id}>*`,
@@ -46,26 +82,24 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.message.react('✍️').catch(err => console.log("Failed to react:", err));
 
-        // Mute the user by assigning the alerts-off role
         try {
             const member = await interaction.guild.members.fetch(interaction.user.id);
             await member.roles.add(ALERTS_OFF_ROLE);
+            
+            // Save the 1-hour expiration timestamp to Google Sheets
+            await fetch(GOOGLE_SHEET_WEB_APP, {
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'add_mute',
+                    userId: interaction.user.id,
+                    unmuteTime: Date.now() + 3600000 
+                }),
+                headers: { 'Content-Type': 'application/json' }
+            });
         } catch (err) {
-            console.log("Could not assign ALERTS_OFF_ROLE:", err);
+            console.log("Could not assign ALERTS_OFF_ROLE or save timer:", err);
         }
 
-        // Auto-remove the mute role after 1 hour (3600000 ms)
-        setTimeout(async () => {
-            try {
-                const guild = await client.guilds.fetch(GUILD_ID);
-                const member = await guild.members.fetch(interaction.user.id);
-                if (member.roles.cache.has(ALERTS_OFF_ROLE)) {
-                    await member.roles.remove(ALERTS_OFF_ROLE);
-                }
-            } catch (err) {}
-        }, 3600000);
-
-        // Build the DM Buttons, embedding the channel & message ID directly into the button's data
         const appliedBtn = new ButtonBuilder()
             .setCustomId(`applied_${interaction.channelId}_${interaction.message.id}`)
             .setLabel('✅ Mark as Applied')
@@ -91,9 +125,7 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // --- 2. MARK AS APPLIED BUTTON (Clicked inside the DM) ---
     else if (interaction.customId.startsWith('applied_')) {
-        // Extract the target IDs from the button data
         const [, channelId, messageId] = interaction.customId.split('_');
         
         try {
@@ -101,12 +133,10 @@ client.on('interactionCreate', async interaction => {
             const channel = await guild.channels.fetch(channelId);
             const message = await channel.messages.fetch(messageId);
             
-            // Swap the drafting emoji for the applied emoji
             const draftingReaction = message.reactions.cache.get('✍️');
             if (draftingReaction) await draftingReaction.users.remove(client.user.id);
             await message.react('✅');
 
-            // Disable the clicked button to prevent spamming
             const updatedRow = disableClickedButton(interaction);
             await interaction.update({ 
                 content: interaction.message.content + "\n\n✅ *Status updated! The original post is now marked as Applied.*", 
@@ -118,13 +148,18 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // --- 3. TURN ALERTS ON BUTTON (Clicked inside the DM) ---
     else if (interaction.customId === 'alerts_on') {
         try {
             const guild = await client.guilds.fetch(GUILD_ID);
             const member = await guild.members.fetch(interaction.user.id);
-            
             await member.roles.remove(ALERTS_OFF_ROLE);
+
+            // Remove the user from the Google Sheet early so they aren't unmuted twice
+            await fetch(GOOGLE_SHEET_WEB_APP, {
+                method: 'POST',
+                body: JSON.stringify({ action: 'remove_mute', userId: interaction.user.id }),
+                headers: { 'Content-Type': 'application/json' }
+            });
 
             const updatedRow = disableClickedButton(interaction);
             await interaction.update({ 
@@ -138,7 +173,6 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// Helper function to dynamically disable buttons in the DM
 function disableClickedButton(interaction) {
     const updatedRow = new ActionRowBuilder();
     interaction.message.components[0].components.forEach(comp => {
@@ -149,11 +183,15 @@ function disableClickedButton(interaction) {
     return updatedRow;
 }
 
-// The Webhook Listener for your Puppeteer Scraper
+// The Webhook Listener
 app.post('/new-job', async (req, res) => {
     try {
         const { jobCategoryKey, jobTitle, jobLink } = req.body;
         if (!jobCategoryKey || !jobTitle || !jobLink) return res.status(400).send({ error: "Missing job data" });
+        
+        // CRITICAL: Clean up any expired mutes right before pinging people for a new job
+        await checkExpiredMutes();
+
         await postJobAlert(jobCategoryKey, jobTitle, jobLink);
         res.status(200).send({ success: true, message: "Job posted to Discord" });
     } catch (error) {
