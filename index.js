@@ -2,7 +2,6 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const express = require('express');
 
-// We feed the bot your Apps Script URL so it can talk to the database
 const GOOGLE_SHEET_WEB_APP = "https://script.google.com/macros/s/AKfycbz4XegBGQS31wmMsG8Ux-jPnfdSHHiZCAH250d_E0ZOKwjBk5BiQn1x-RoE4Dk8RHvI/exec";
 
 const client = new Client({
@@ -25,7 +24,9 @@ const roleIds = {
     "management-va": "1495457104096530464"
 };
 
-// --- NEW FUNCTION: Check Google Sheets for expired mutes ---
+// GLOBAL FLAG FOR COLD START
+let isBotFullyReady = false;
+
 async function checkExpiredMutes() {
     try {
         const res = await fetch(GOOGLE_SHEET_WEB_APP, {
@@ -61,16 +62,17 @@ client.once('clientReady', async () => {
         await guild.members.fetch();
         console.log("Server member list cached successfully.");
         
-        // Check for expired timers immediately upon waking up
         await checkExpiredMutes();
-        // Keep checking every 5 minutes while the server is awake
         setInterval(checkExpiredMutes, 5 * 60 * 1000);
     } catch (err) {
         console.error("Could not fetch members:", err);
+    } finally {
+        // Unlock the webhook once boot is totally finished
+        isBotFullyReady = true; 
+        console.log("Bot is fully awake and ready for interactions.");
     }
 });
 
-// The Interaction Listener
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
@@ -84,14 +86,10 @@ client.on('interactionCreate', async interaction => {
 
         try {
             const member = await interaction.guild.members.fetch(interaction.user.id);
-            
-            // Check if they intentionally muted themselves before clicking
             const wasAlreadyMuted = member.roles.cache.has(ALERTS_OFF_ROLE);
 
             if (!wasAlreadyMuted) {
-                // Only mute them and start the timer if their alerts were actually ON
                 await member.roles.add(ALERTS_OFF_ROLE);
-                
                 await fetch(GOOGLE_SHEET_WEB_APP, {
                     method: 'POST',
                     body: JSON.stringify({
@@ -160,7 +158,6 @@ client.on('interactionCreate', async interaction => {
             const member = await guild.members.fetch(interaction.user.id);
             await member.roles.remove(ALERTS_OFF_ROLE);
 
-            // Remove the user from the Google Sheet early so they aren't unmuted twice
             await fetch(GOOGLE_SHEET_WEB_APP, {
                 method: 'POST',
                 body: JSON.stringify({ action: 'remove_mute', userId: interaction.user.id }),
@@ -189,22 +186,27 @@ function disableClickedButton(interaction) {
     return updatedRow;
 }
 
-// The Webhook Listener
 app.post('/new-job', async (req, res) => {
-    // SECURITY LOCK: Reject any request that doesn't have the exact secret key
     const authHeader = req.headers.authorization;
     if (authHeader !== "SECRET_KEY_12345") {
         return res.status(403).send({ error: "Unauthorized access" });
+    }
+
+    // --- COLD-START LOCK ---
+    // Wait up to 15 seconds for the bot to finish booting before posting
+    let retries = 0;
+    while (!isBotFullyReady && retries < 15) {
+        await new Promise(r => setTimeout(r, 1000));
+        retries++;
     }
 
     try {
         const { jobCategoryKey, jobTitle, jobLink } = req.body;
         if (!jobCategoryKey || !jobTitle || !jobLink) return res.status(400).send({ error: "Missing job data" });
         
-        // CRITICAL: Clean up any expired mutes right before pinging people for a new job
         await checkExpiredMutes();
-
         await postJobAlert(jobCategoryKey, jobTitle, jobLink);
+        
         res.status(200).send({ success: true, message: "Job posted to Discord" });
     } catch (error) {
         console.error("Error posting job:", error);
