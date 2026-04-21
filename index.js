@@ -24,7 +24,6 @@ const roleIds = {
     "management-va": "1495457104096530464"
 };
 
-// GLOBAL FLAG FOR COLD START
 let isBotFullyReady = false;
 
 async function checkExpiredMutes() {
@@ -78,14 +77,17 @@ client.on('interactionCreate', async interaction => {
     if (interaction.customId.startsWith('apply_job_')) {
         const originalContent = interaction.message.content;
         
-        // Extract the URL and strip the text line entirely
+        // Extract URL and Title for the DM
         const urlMatch = originalContent.match(/Job Link:\s*<([^>]+)>/);
         const extractedUrl = urlMatch ? urlMatch[1] : null;
+        
+        const titleMatch = originalContent.match(/🚨\s*(.+)/);
+        const jobTitleDisplay = titleMatch ? titleMatch[1].replace(/\*\*/g, '').trim() : "this job";
+        const cleanUrl = extractedUrl || "Link unavailable";
         
         let newContent = originalContent.replace(/\n*Job Link:\s*<[^>]+>/, '').trim();
         newContent += `\n\n*🔒 Applying: <@${interaction.user.id}>*`;
 
-        // Update the buttons on the main post
         const disabledApplyBtn = new ButtonBuilder()
             .setCustomId(interaction.customId)
             .setLabel('Apply Now')
@@ -104,6 +106,7 @@ client.on('interactionCreate', async interaction => {
 
         const updatedRow = new ActionRowBuilder().addComponents(componentsArray);
 
+        // Update the main channel message instantly
         await interaction.update({
             content: newContent,
             components: [updatedRow] 
@@ -118,6 +121,8 @@ client.on('interactionCreate', async interaction => {
             const member = await interaction.guild.members.fetch(interaction.user.id);
             wasAlreadyMuted = member.roles.cache.has(ALERTS_OFF_ROLE);
 
+            const dmHeader = `**You are applying for this job!**\n\n📌 **${jobTitleDisplay}**\n🔗 ${cleanUrl}\n\n`;
+
             if (!wasAlreadyMuted) {
                 await member.roles.add(ALERTS_OFF_ROLE);
                 await fetch(GOOGLE_SHEET_WEB_APP, {
@@ -130,18 +135,18 @@ client.on('interactionCreate', async interaction => {
                     headers: { 'Content-Type': 'application/json' }
                 });
                 
-                dmContent = "**You are applying for this job!**\n\nI marked the original post with ✍️ and **paused your job alerts for 1 hour** so you can focus on drafting your pitch.\n\nWhen you are finished, click the buttons below to update the post and un-pause your alerts without leaving this chat.";
+                dmContent = dmHeader + "I marked the original post with ✍️ and **paused your job alerts for 1 hour** so you can focus on drafting your pitch.\n\nWhen you are finished, click the buttons below to update the post.";
             } else {
-                dmContent = "**You are applying for this job!**\n\nI marked the original post with ✍️ so you can focus on drafting your pitch.\n\n*(Note: Your alerts are already muted, so I didn't change your settings or restart any timers!)*\n\nWhen you are finished, click the buttons below to update the post.";
+                dmContent = dmHeader + "I marked the original post with ✍️ so you can focus on drafting your pitch.\n\n*(Note: Your alerts are already muted, so I didn't change your settings or restart any timers!)*\n\nWhen you are finished, click the buttons below to update the post.";
             }
         } catch (err) {
             console.log("Could not assign ALERTS_OFF_ROLE or save timer:", err);
-            dmContent = "**You are applying for this job!**\n\nI marked the original post with ✍️.\n\nWhen you are finished, click the buttons below to update the post.";
+            dmContent = `**You are applying for this job!**\n\n📌 **${jobTitleDisplay}**\n🔗 ${cleanUrl}\n\nI marked the original post with ✍️.\n\nWhen you are finished, click the buttons below to update the post.`;
         }
 
-        const appliedBtn = new ButtonBuilder()
+        const doneBtn = new ButtonBuilder()
             .setCustomId(`applied_${interaction.channelId}_${interaction.message.id}`)
-            .setLabel('✅ Mark as Applied')
+            .setLabel('✅ Done')
             .setStyle(ButtonStyle.Success);
             
         const alertsBtn = new ButtonBuilder()
@@ -149,7 +154,17 @@ client.on('interactionCreate', async interaction => {
             .setLabel('🔔 Turn Alerts Back On')
             .setStyle(ButtonStyle.Primary);
 
-        const dmRow = new ActionRowBuilder().addComponents(appliedBtn, alertsBtn);
+        const badLinkBtn = new ButtonBuilder()
+            .setCustomId(`badlink_${interaction.channelId}_${interaction.message.id}`)
+            .setLabel('❌ Bad Link')
+            .setStyle(ButtonStyle.Danger);
+
+        const backBtn = new ButtonBuilder()
+            .setLabel('➡️ Back to Channel')
+            .setStyle(ButtonStyle.Link)
+            .setURL(`https://discord.com/channels/${GUILD_ID}/${interaction.channelId}/${interaction.message.id}`);
+
+        const dmRow = new ActionRowBuilder().addComponents(doneBtn, alertsBtn, badLinkBtn, backBtn);
 
         try {
             await interaction.user.send({
@@ -158,7 +173,7 @@ client.on('interactionCreate', async interaction => {
             });
         } catch (error) {
             let fallbackMsg = !wasAlreadyMuted 
-                ? "You are applying for the job! I added the ✍️ reaction and muted your alerts for 1 hour. I tried to DM you the shortcut buttons to mark it as Applied, but your DMs are closed."
+                ? "You are applying for the job! I added the ✍️ reaction and muted your alerts for 1 hour. I tried to DM you the shortcut buttons, but your DMs are closed."
                 : "You are applying for the job! I added the ✍️ reaction. Your alerts are already muted, so I left your settings alone. I tried to DM you the shortcut buttons, but your DMs are closed.";
                 
             await interaction.followUp({
@@ -169,6 +184,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     else if (interaction.customId.startsWith('applied_')) {
+        await interaction.deferUpdate(); 
         const [, channelId, messageId] = interaction.customId.split('_');
         
         try {
@@ -181,17 +197,43 @@ client.on('interactionCreate', async interaction => {
             await message.react('✅');
 
             const updatedRow = disableClickedButton(interaction);
-            await interaction.update({ 
+            await interaction.editReply({ 
                 content: interaction.message.content + "\n\n✅ *Status updated! The original post is now marked as Applied.*", 
                 components: [updatedRow] 
             });
         } catch (err) {
             console.error("Could not update job post from DM:", err);
-            await interaction.reply({ content: "Error: Could not find the original post. It may have been deleted.", ephemeral: true });
+            await interaction.followUp({ content: "Boop - that didn't work. Try again!", ephemeral: true });
+        }
+    }
+
+    else if (interaction.customId.startsWith('badlink_')) {
+        await interaction.deferUpdate(); 
+        const [, channelId, messageId] = interaction.customId.split('_');
+        
+        try {
+            const guild = await client.guilds.fetch(GUILD_ID);
+            const channel = await guild.channels.fetch(channelId);
+            const message = await channel.messages.fetch(messageId);
+            
+            const draftingReaction = message.reactions.cache.get('✍️');
+            if (draftingReaction) await draftingReaction.users.remove(client.user.id);
+            await message.react('❌');
+
+            const updatedRow = disableClickedButton(interaction);
+            await interaction.editReply({ 
+                content: interaction.message.content + "\n\n❌ *Status updated! The original post is marked as a Bad Link.*", 
+                components: [updatedRow] 
+            });
+        } catch (err) {
+            console.error("Could not update job post from DM for Bad Link:", err);
+            await interaction.followUp({ content: "Boop - that didn't work. Try again!", ephemeral: true });
         }
     }
 
     else if (interaction.customId === 'alerts_on') {
+        await interaction.deferUpdate();
+
         try {
             const guild = await client.guilds.fetch(GUILD_ID);
             const member = await guild.members.fetch(interaction.user.id);
@@ -204,13 +246,13 @@ client.on('interactionCreate', async interaction => {
             });
 
             const updatedRow = disableClickedButton(interaction);
-            await interaction.update({ 
+            await interaction.editReply({ 
                 content: interaction.message.content + "\n\n🔔 *Your job alerts are now active again.*", 
                 components: [updatedRow] 
             });
         } catch (err) {
             console.error("Could not remove ALERTS_OFF_ROLE:", err);
-            await interaction.reply({ content: "Error: Could not update your role.", ephemeral: true });
+            await interaction.followUp({ content: "Boop - that didn't work. Try again!", ephemeral: true });
         }
     }
 });
