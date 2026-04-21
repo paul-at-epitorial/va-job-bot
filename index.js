@@ -67,7 +67,6 @@ client.once('clientReady', async () => {
     } catch (err) {
         console.error("Could not fetch members:", err);
     } finally {
-        // Unlock the webhook once boot is totally finished
         isBotFullyReady = true; 
         console.log("Bot is fully awake and ready for interactions.");
     }
@@ -84,9 +83,12 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.message.react('✍️').catch(err => console.log("Failed to react:", err));
 
+        let wasAlreadyMuted = false;
+        let dmContent = "";
+
         try {
             const member = await interaction.guild.members.fetch(interaction.user.id);
-            const wasAlreadyMuted = member.roles.cache.has(ALERTS_OFF_ROLE);
+            wasAlreadyMuted = member.roles.cache.has(ALERTS_OFF_ROLE);
 
             if (!wasAlreadyMuted) {
                 await member.roles.add(ALERTS_OFF_ROLE);
@@ -99,9 +101,15 @@ client.on('interactionCreate', async interaction => {
                     }),
                     headers: { 'Content-Type': 'application/json' }
                 });
+                
+                dmContent = "**You claimed a job!**\n\nI marked the original post with ✍️ and **paused your job alerts for 1 hour** so you can focus on drafting your pitch.\n\nWhen you are finished, click the buttons below to update the post and un-pause your alerts without leaving this chat.";
+            } else {
+                dmContent = "**You claimed a job!**\n\nI marked the original post with ✍️ so you can focus on drafting your pitch.\n\n*(Note: Your alerts are already muted, so I didn't change your settings or restart any timers!)*\n\nWhen you are finished, click the buttons below to update the post.";
             }
         } catch (err) {
             console.log("Could not assign ALERTS_OFF_ROLE or save timer:", err);
+            // Fallback content just in case the role assignment fails
+            dmContent = "**You claimed a job!**\n\nI marked the original post with ✍️.\n\nWhen you are finished, click the buttons below to update the post.";
         }
 
         const appliedBtn = new ButtonBuilder()
@@ -118,12 +126,16 @@ client.on('interactionCreate', async interaction => {
 
         try {
             await interaction.user.send({
-                content: "**You claimed a job!**\n\nI marked the original post with ✍️ and **paused your job alerts for 1 hour** so you can focus on drafting your pitch.\n\nWhen you are finished, click the buttons below to update the post and un-pause your alerts without leaving this chat.",
+                content: dmContent,
                 components: [dmRow]
             });
         } catch (error) {
+            let fallbackMsg = !wasAlreadyMuted 
+                ? "You claimed the job! I added the ✍️ reaction and muted your alerts for 1 hour. I tried to DM you the shortcut buttons to mark it as Applied, but your DMs are closed."
+                : "You claimed the job! I added the ✍️ reaction. Your alerts are already muted, so I left your settings alone. I tried to DM you the shortcut buttons, but your DMs are closed.";
+                
             await interaction.followUp({
-                content: "You claimed the job! I added the ✍️ reaction and muted your alerts for 1 hour. I tried to DM you the shortcut buttons to mark it as Applied, but your DMs are closed. You will have to update the emojis manually in this channel.",
+                content: fallbackMsg,
                 ephemeral: true
             });
         }
@@ -192,7 +204,6 @@ app.post('/new-job', async (req, res) => {
         return res.status(403).send({ error: "Unauthorized access" });
     }
 
-    // --- COLD-START LOCK ---
     // Wait up to 15 seconds for the bot to finish booting before posting
     let retries = 0;
     while (!isBotFullyReady && retries < 15) {
