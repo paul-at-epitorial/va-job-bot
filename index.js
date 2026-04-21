@@ -84,18 +84,24 @@ client.on('interactionCreate', async interaction => {
 
         try {
             const member = await interaction.guild.members.fetch(interaction.user.id);
-            await member.roles.add(ALERTS_OFF_ROLE);
             
-            // Save the 1-hour expiration timestamp to Google Sheets
-            await fetch(GOOGLE_SHEET_WEB_APP, {
-                method: 'POST',
-                body: JSON.stringify({
-                    action: 'add_mute',
-                    userId: interaction.user.id,
-                    unmuteTime: Date.now() + 3600000 
-                }),
-                headers: { 'Content-Type': 'application/json' }
-            });
+            // Check if they intentionally muted themselves before clicking
+            const wasAlreadyMuted = member.roles.cache.has(ALERTS_OFF_ROLE);
+
+            if (!wasAlreadyMuted) {
+                // Only mute them and start the timer if their alerts were actually ON
+                await member.roles.add(ALERTS_OFF_ROLE);
+                
+                await fetch(GOOGLE_SHEET_WEB_APP, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        action: 'add_mute',
+                        userId: interaction.user.id,
+                        unmuteTime: Date.now() + 3600000 
+                    }),
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
         } catch (err) {
             console.log("Could not assign ALERTS_OFF_ROLE or save timer:", err);
         }
