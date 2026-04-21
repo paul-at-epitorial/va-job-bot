@@ -191,6 +191,12 @@ function disableClickedButton(interaction) {
 
 // The Webhook Listener
 app.post('/new-job', async (req, res) => {
+    // SECURITY LOCK: Reject any request that doesn't have the exact secret key
+    const authHeader = req.headers.authorization;
+    if (authHeader !== "SECRET_KEY_12345") {
+        return res.status(403).send({ error: "Unauthorized access" });
+    }
+
     try {
         const { jobCategoryKey, jobTitle, jobLink } = req.body;
         if (!jobCategoryKey || !jobTitle || !jobLink) return res.status(400).send({ error: "Missing job data" });
