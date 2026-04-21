@@ -75,10 +75,38 @@ client.once('clientReady', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
-    if (interaction.customId.startsWith('claim_job_')) {
+    if (interaction.customId.startsWith('apply_job_')) {
+        const originalContent = interaction.message.content;
+        
+        // Extract the URL and strip the text line entirely
+        const urlMatch = originalContent.match(/Job Link:\s*<([^>]+)>/);
+        const extractedUrl = urlMatch ? urlMatch[1] : null;
+        
+        let newContent = originalContent.replace(/\n*Job Link:\s*<[^>]+>/, '').trim();
+        newContent += `\n\n*🔒 Applying: <@${interaction.user.id}>*`;
+
+        // Update the buttons on the main post
+        const disabledApplyBtn = new ButtonBuilder()
+            .setCustomId(interaction.customId)
+            .setLabel('Apply Now')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(true);
+
+        const componentsArray = [disabledApplyBtn];
+
+        if (extractedUrl) {
+            const readMoreBtn = new ButtonBuilder()
+                .setLabel('Read More ↗')
+                .setStyle(ButtonStyle.Link)
+                .setURL(extractedUrl);
+            componentsArray.push(readMoreBtn);
+        }
+
+        const updatedRow = new ActionRowBuilder().addComponents(componentsArray);
+
         await interaction.update({
-            content: interaction.message.content + `\n\n*🔒 Claimed by <@${interaction.user.id}>*`,
-            components: [] 
+            content: newContent,
+            components: [updatedRow] 
         });
 
         await interaction.message.react('✍️').catch(err => console.log("Failed to react:", err));
@@ -102,14 +130,13 @@ client.on('interactionCreate', async interaction => {
                     headers: { 'Content-Type': 'application/json' }
                 });
                 
-                dmContent = "**You claimed a job!**\n\nI marked the original post with ✍️ and **paused your job alerts for 1 hour** so you can focus on drafting your pitch.\n\nWhen you are finished, click the buttons below to update the post and un-pause your alerts without leaving this chat.";
+                dmContent = "**You are applying for this job!**\n\nI marked the original post with ✍️ and **paused your job alerts for 1 hour** so you can focus on drafting your pitch.\n\nWhen you are finished, click the buttons below to update the post and un-pause your alerts without leaving this chat.";
             } else {
-                dmContent = "**You claimed a job!**\n\nI marked the original post with ✍️ so you can focus on drafting your pitch.\n\n*(Note: Your alerts are already muted, so I didn't change your settings or restart any timers!)*\n\nWhen you are finished, click the buttons below to update the post.";
+                dmContent = "**You are applying for this job!**\n\nI marked the original post with ✍️ so you can focus on drafting your pitch.\n\n*(Note: Your alerts are already muted, so I didn't change your settings or restart any timers!)*\n\nWhen you are finished, click the buttons below to update the post.";
             }
         } catch (err) {
             console.log("Could not assign ALERTS_OFF_ROLE or save timer:", err);
-            // Fallback content just in case the role assignment fails
-            dmContent = "**You claimed a job!**\n\nI marked the original post with ✍️.\n\nWhen you are finished, click the buttons below to update the post.";
+            dmContent = "**You are applying for this job!**\n\nI marked the original post with ✍️.\n\nWhen you are finished, click the buttons below to update the post.";
         }
 
         const appliedBtn = new ButtonBuilder()
@@ -131,8 +158,8 @@ client.on('interactionCreate', async interaction => {
             });
         } catch (error) {
             let fallbackMsg = !wasAlreadyMuted 
-                ? "You claimed the job! I added the ✍️ reaction and muted your alerts for 1 hour. I tried to DM you the shortcut buttons to mark it as Applied, but your DMs are closed."
-                : "You claimed the job! I added the ✍️ reaction. Your alerts are already muted, so I left your settings alone. I tried to DM you the shortcut buttons, but your DMs are closed.";
+                ? "You are applying for the job! I added the ✍️ reaction and muted your alerts for 1 hour. I tried to DM you the shortcut buttons to mark it as Applied, but your DMs are closed."
+                : "You are applying for the job! I added the ✍️ reaction. Your alerts are already muted, so I left your settings alone. I tried to DM you the shortcut buttons, but your DMs are closed.";
                 
             await interaction.followUp({
                 content: fallbackMsg,
@@ -204,7 +231,6 @@ app.post('/new-job', async (req, res) => {
         return res.status(403).send({ error: "Unauthorized access" });
     }
 
-    // Wait up to 15 seconds for the bot to finish booting before posting
     let retries = 0;
     while (!isBotFullyReady && retries < 15) {
         await new Promise(r => setTimeout(r, 1000));
@@ -240,15 +266,15 @@ async function postJobAlert(jobCategoryKey, jobTitle, jobLink) {
         }
     });
 
-    const claimButton = new ButtonBuilder()
-        .setCustomId(`claim_job_${Date.now()}`)
-        .setLabel('Claim Job')
+    const applyButton = new ButtonBuilder()
+        .setCustomId(`apply_job_${Date.now()}`)
+        .setLabel('Apply Now')
         .setStyle(ButtonStyle.Primary);
 
-    const row = new ActionRowBuilder().addComponents(claimButton);
+    const row = new ActionRowBuilder().addComponents(applyButton);
 
     await channel.send({
-        content: `🚨 **New Job: ${jobTitle}**\nApply here: ${jobLink}`,
+        content: `🚨 ${jobTitle}\nJob Link: ${jobLink}`,
         components: [row]
     });
 
